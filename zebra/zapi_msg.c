@@ -435,27 +435,6 @@ int zsend_interface_addresses(struct zserv *client, struct interface *ifp)
 	return 0;
 }
 
-/* Notify client about interface moving from one VRF to another.
- * Whether client is interested in old and new VRF is checked by caller.
- */
-int zsend_interface_vrf_update(struct zserv *client, struct interface *ifp,
-			       vrf_id_t vrf_id)
-{
-	struct stream *s = stream_new(ZEBRA_MAX_PACKET_SIZ);
-
-	zclient_create_header(s, ZEBRA_INTERFACE_VRF_UPDATE, ifp->vrf->vrf_id);
-
-	/* Fill in the name of the interface and its new VRF (id) */
-	stream_put(s, ifp->name, INTERFACE_NAMSIZ);
-	stream_putl(s, vrf_id);
-
-	/* Write packet size. */
-	stream_putw_at(s, 0, stream_get_endp(s));
-
-	client->if_vrfchg_cnt++;
-	return zserv_send_message(client, s);
-}
-
 /* Add new nbr connected IPv6 address */
 void nbr_connected_add_ipv6(struct interface *ifp, struct in6_addr *address)
 {
@@ -565,7 +544,6 @@ int zsend_redistribute_route(int cmd, struct zserv *client,
 			client->redist_v6_del_cnt++;
 		break;
 	case AFI_L2VPN:
-	case AFI_LINKSTATE:
 	case AFI_MAX:
 	case AFI_UNSPEC:
 		break;
@@ -849,7 +827,9 @@ void zsend_rule_notify_owner(const struct zebra_dplane_ctx *ctx,
 
 	s = stream_new(ZEBRA_MAX_PACKET_SIZ);
 
-	zclient_create_header(s, ZEBRA_RULE_NOTIFY_OWNER, VRF_DEFAULT);
+	zclient_create_header(s, ZEBRA_RULE_NOTIFY_OWNER,
+			      dplane_ctx_rule_get_vrfid(ctx));
+
 	stream_put(s, &note, sizeof(note));
 	stream_putl(s, dplane_ctx_rule_get_seq(ctx));
 	stream_putl(s, dplane_ctx_rule_get_priority(ctx));
@@ -1699,10 +1679,14 @@ static bool zapi_read_nexthops(struct zserv *client, struct prefix *p,
 			       struct nexthop_group **png,
 			       struct nhg_backup_info **pbnhg)
 {
+	struct zapi_nexthop *znh;
 	struct nexthop_group *ng = NULL;
 	struct nhg_backup_info *bnhg = NULL;
 	uint16_t i;
 	struct nexthop *last_nh = NULL;
+	bool same_weight = true;
+	uint64_t max_weight = 0;
+	uint64_t tmp;
 
 	assert(!(png && pbnhg));
 
@@ -1715,6 +1699,41 @@ static bool zapi_read_nexthops(struct zserv *client, struct prefix *p,
 				   backup_nh_num);
 
 		bnhg = zebra_nhg_backup_alloc();
+	}
+
+	for (i = 0; i < nexthop_num; i++) {
+		znh = &nhops[i];
+
+		if (max_weight < znh->weight) {
+			if (i != 0 || znh->weight != 1)
+				same_weight = false;
+
+			max_weight = znh->weight;
+		}
+	}
+
+	/*
+	 * Let's convert the weights to a scaled value
+	 * between 1 and zrouter.nexthop_weight_scale_value
+	 * This is a simple application of a ratio:
+	 * scaled_weight/zrouter.nexthop_weight_scale_value = 
+         * weight/max_weight
+	 * This translates to:
+	 * scaled_weight = weight * zrouter.nexthop_weight_scale_value
+	 *                 -------------------------------------------
+	 *                           max_weight
+	 *
+	 * This same formula is applied to both the nexthops
+	 * and the backup nexthops
+	 */
+	if (!same_weight) {
+		for (i = 0; i < nexthop_num; i++) {
+			znh = &nhops[i];
+
+			tmp = (uint64_t)znh->weight *
+				zrouter.nexthop_weight_scale_value;
+			znh->weight = MAX(1, ((uint32_t)(tmp / max_weight)));
+		}
 	}
 
 	/*

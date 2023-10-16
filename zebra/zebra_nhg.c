@@ -1310,6 +1310,7 @@ int nhg_ctx_process(struct nhg_ctx *ctx)
 		break;
 	case NHG_CTX_OP_DEL:
 		ret = nhg_ctx_process_del(ctx);
+		break;
 	case NHG_CTX_OP_NONE:
 		break;
 	}
@@ -2288,7 +2289,6 @@ static int nexthop_active(struct nexthop *nexthop, struct nhg_hash_entry *nhe,
 			break;
 		case AFI_UNSPEC:
 		case AFI_L2VPN:
-		case AFI_LINKSTATE:
 		case AFI_MAX:
 			flog_err(EC_LIB_DEVELOPMENT,
 				 "%s: unknown address-family: %u", __func__,
@@ -2332,7 +2332,6 @@ static int nexthop_active(struct nexthop *nexthop, struct nhg_hash_entry *nhe,
 		break;
 	case AFI_UNSPEC:
 	case AFI_L2VPN:
-	case AFI_LINKSTATE:
 	case AFI_MAX:
 		assert(afi != AFI_IP && afi != AFI_IP6);
 		break;
@@ -3750,8 +3749,13 @@ void zebra_interface_nhg_reinstall(struct interface *ifp)
 					rb_node_dep->nhe->flags);
 			zebra_nhg_install_kernel(rb_node_dep->nhe);
 
-			/* mark depedent uninstall, when interface associated
-			 * singleton is installed, install depedent
+			/* Don't need to modify dependents if installed */
+			if (CHECK_FLAG(rb_node_dep->nhe->flags,
+				       NEXTHOP_GROUP_INSTALLED))
+				continue;
+
+			/* mark dependent uninstalled; when interface associated
+			 * singleton is installed, install dependent
 			 */
 			frr_each_safe (nhg_connected_tree,
 				       &rb_node_dep->nhe->nhg_dependents,

@@ -71,8 +71,6 @@
 #include "bgpd/bgp_io.h"
 #include "bgpd/bgp_ecommunity.h"
 #include "bgpd/bgp_flowspec.h"
-#include "bgpd/bgp_linkstate.h"
-#include "bgpd/bgp_linkstate_vty.h"
 #include "bgpd/bgp_labelpool.h"
 #include "bgpd/bgp_pbr.h"
 #include "bgpd/bgp_addpath.h"
@@ -188,7 +186,6 @@ int bgp_option_set(int flag)
 int bgp_option_unset(int flag)
 {
 	switch (flag) {
-	/* Fall through.  */
 	case BGP_OPT_NO_ZEBRA:
 	case BGP_OPT_NO_FIB:
 		UNSET_FLAG(bm->options, flag);
@@ -2042,10 +2039,6 @@ void peer_as_change(struct peer *peer, as_t as, int as_specified,
 			   PEER_FLAG_REFLECTOR_CLIENT);
 		UNSET_FLAG(peer->af_flags[AFI_L2VPN][SAFI_EVPN],
 			   PEER_FLAG_REFLECTOR_CLIENT);
-		UNSET_FLAG(peer->af_flags[AFI_LINKSTATE][SAFI_LINKSTATE],
-			   PEER_FLAG_REFLECTOR_CLIENT);
-		UNSET_FLAG(peer->af_flags[AFI_LINKSTATE][SAFI_LINKSTATE_VPN],
-			   PEER_FLAG_REFLECTOR_CLIENT);
 	}
 }
 
@@ -3153,6 +3146,7 @@ int peer_group_bind(struct bgp *bgp, union sockunion *su, struct peer *peer,
 			peer->as_type = group->conf->as_type;
 			peer->as = group->conf->as;
 			peer->sort = group->conf->sort;
+			peer->sub_sort = group->conf->sub_sort;
 		}
 
 		ptype = peer_sort(peer);
@@ -4390,9 +4384,7 @@ bool peer_active(struct peer *peer)
 	    || peer->afc[AFI_IP6][SAFI_MPLS_VPN]
 	    || peer->afc[AFI_IP6][SAFI_ENCAP]
 	    || peer->afc[AFI_IP6][SAFI_FLOWSPEC]
-	    || peer->afc[AFI_L2VPN][SAFI_EVPN]
-	    || peer->afc[AFI_LINKSTATE][SAFI_LINKSTATE]
-	    || peer->afc[AFI_LINKSTATE][SAFI_LINKSTATE_VPN])
+	    || peer->afc[AFI_L2VPN][SAFI_EVPN])
 		return true;
 	return false;
 }
@@ -4412,9 +4404,7 @@ bool peer_active_nego(struct peer *peer)
 	    || peer->afc_nego[AFI_IP6][SAFI_MPLS_VPN]
 	    || peer->afc_nego[AFI_IP6][SAFI_ENCAP]
 	    || peer->afc_nego[AFI_IP6][SAFI_FLOWSPEC]
-	    || peer->afc_nego[AFI_L2VPN][SAFI_EVPN]
-	    || peer->afc_nego[AFI_LINKSTATE][SAFI_LINKSTATE]
-	    || peer->afc_nego[AFI_LINKSTATE][SAFI_LINKSTATE_VPN])
+	    || peer->afc_nego[AFI_L2VPN][SAFI_EVPN])
 		return true;
 	return false;
 }
@@ -4562,7 +4552,7 @@ static const struct peer_flag_action peer_af_flag_action_list[] = {
 	{PEER_FLAG_AS_OVERRIDE, 1, peer_change_reset_out},
 	{PEER_FLAG_REMOVE_PRIVATE_AS_ALL_REPLACE, 1, peer_change_reset_out},
 	{PEER_FLAG_WEIGHT, 0, peer_change_reset_in},
-	{PEER_FLAG_DISABLE_ADDPATH_RX, 0, peer_change_reset},
+	{PEER_FLAG_DISABLE_ADDPATH_RX, 0, peer_change_none},
 	{PEER_FLAG_SOO, 0, peer_change_reset},
 	{PEER_FLAG_ACCEPT_OWN, 0, peer_change_reset},
 	{0, 0, 0}};
@@ -7837,8 +7827,9 @@ int peer_ttl_security_hops_set(struct peer *peer, int gtsm_hops)
 	struct listnode *node, *nnode;
 	int ret;
 
-	zlog_debug("%s: set gtsm_hops to %d for %s", __func__, gtsm_hops,
-		   peer->host);
+	if (bgp_debug_neighbor_events(peer))
+		zlog_debug("%s: set gtsm_hops to %d for %s", __func__,
+			   gtsm_hops, peer->host);
 
 	/* We cannot configure ttl-security hops when ebgp-multihop is already
 	   set.  For non peer-groups, the check is simple.  For peer-groups,
@@ -7947,7 +7938,9 @@ int peer_ttl_security_hops_unset(struct peer *peer)
 	struct listnode *node, *nnode;
 	int ret = 0;
 
-	zlog_debug("%s: set gtsm_hops to zero for %s", __func__, peer->host);
+	if (bgp_debug_neighbor_events(peer))
+		zlog_debug("%s: set gtsm_hops to zero for %s", __func__,
+			   peer->host);
 
 	/* if a peer-group member, then reset to peer-group default rather than
 	 * 0 */
@@ -8394,8 +8387,6 @@ void bgp_init(unsigned short instance)
 #endif
 	bgp_ethernetvpn_init();
 	bgp_flowspec_vty_init();
-	bgp_linkstate_init();
-	bgp_linkstate_vty_init();
 
 	/* Access list initialize. */
 	access_list_init();

@@ -1225,8 +1225,9 @@ leak_update(struct bgp *to_bgp, struct bgp_dest *bn,
 	new->extra->vrfleak->parent = bgp_path_info_lock(parent);
 	bgp_dest_lock_node(
 		(struct bgp_dest *)parent->net);
-	if (bgp_orig)
-		new->extra->vrfleak->bgp_orig = bgp_lock(bgp_orig);
+
+	new->extra->vrfleak->bgp_orig = bgp_lock(bgp_orig);
+
 	if (nexthop_orig)
 		new->extra->vrfleak->nexthop_orig = *nexthop_orig;
 
@@ -1728,6 +1729,7 @@ void vpn_leak_from_vrf_update(struct bgp *to_bgp,	     /* to */
 			zlog_debug(
 				"%s: %s skipping: waiting for a valid per-label nexthop.",
 				__func__, from_bgp->name_pretty);
+		bgp_attr_flush(&static_attr);
 		return;
 	}
 	if (label_val == MPLS_LABEL_NONE)

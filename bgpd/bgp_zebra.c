@@ -477,66 +477,6 @@ static int bgp_interface_nbr_address_delete(ZAPI_CALLBACK_ARGS)
 	return 0;
 }
 
-/* VRF update for an interface. */
-static int bgp_interface_vrf_update(ZAPI_CALLBACK_ARGS)
-{
-	struct interface *ifp;
-	vrf_id_t new_vrf_id;
-	struct connected *c;
-	struct nbr_connected *nc;
-	struct listnode *node, *nnode;
-	struct bgp *bgp;
-	struct peer *peer;
-
-	ifp = zebra_interface_vrf_update_read(zclient->ibuf, vrf_id,
-					      &new_vrf_id);
-	if (!ifp)
-		return 0;
-
-	if (BGP_DEBUG(zebra, ZEBRA))
-		zlog_debug("Rx Intf VRF change VRF %u IF %s NewVRF %u", vrf_id,
-			   ifp->name, new_vrf_id);
-
-	bgp = bgp_lookup_by_vrf_id(vrf_id);
-
-	if (bgp) {
-		for (ALL_LIST_ELEMENTS(ifp->connected, node, nnode, c))
-			bgp_connected_delete(bgp, c);
-
-		for (ALL_LIST_ELEMENTS(ifp->nbr_connected, node, nnode, nc))
-			bgp_nbr_connected_delete(bgp, nc, 1);
-
-		/* Fast external-failover */
-		if (!CHECK_FLAG(bgp->flags, BGP_FLAG_NO_FAST_EXT_FAILOVER)) {
-			for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
-				if ((peer->ttl != BGP_DEFAULT_TTL)
-				    && (peer->gtsm_hops
-					!= BGP_GTSM_HOPS_CONNECTED))
-					continue;
-
-				if (ifp == peer->nexthop.ifp)
-					BGP_EVENT_ADD(peer->connection,
-						      BGP_Stop);
-			}
-		}
-	}
-
-	if_update_to_new_vrf(ifp, new_vrf_id);
-
-	bgp = bgp_lookup_by_vrf_id(new_vrf_id);
-	if (!bgp)
-		return 0;
-
-	for (ALL_LIST_ELEMENTS(ifp->connected, node, nnode, c))
-		bgp_connected_add(bgp, c);
-
-	for (ALL_LIST_ELEMENTS(ifp->nbr_connected, node, nnode, nc))
-		bgp_nbr_connected_add(bgp, nc);
-
-	hook_call(bgp_vrf_status_changed, bgp, ifp);
-	return 0;
-}
-
 /* Zebra route add and delete treatment. */
 static int zebra_read_route(ZAPI_CALLBACK_ARGS)
 {
@@ -1267,26 +1207,20 @@ static bool update_ipv6nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
 }
 
 static bool bgp_zebra_use_nhop_weighted(struct bgp *bgp, struct attr *attr,
-					uint64_t tot_bw, uint32_t *nh_weight)
+					uint32_t *nh_weight)
 {
-	uint32_t bw;
-	uint64_t tmp;
-
-	bw = attr->link_bw;
 	/* zero link-bandwidth and link-bandwidth not present are treated
 	 * as the same situation.
 	 */
-	if (!bw) {
+	if (!attr->link_bw) {
 		/* the only situations should be if we're either told
 		 * to skip or use default weight.
 		 */
 		if (bgp->lb_handling == BGP_LINK_BW_SKIP_MISSING)
 			return false;
 		*nh_weight = BGP_ZEBRA_DEFAULT_NHOP_WEIGHT;
-	} else {
-		tmp = (uint64_t)bw * 100;
-		*nh_weight = ((uint32_t)(tmp / tot_bw));
-	}
+	} else
+		*nh_weight = attr->link_bw;
 
 	return true;
 }
@@ -1315,16 +1249,11 @@ void bgp_zebra_announce(struct bgp_dest *dest, const struct prefix *p,
 	int nh_othervrf = 0;
 	bool nh_updated = false;
 	bool do_wt_ecmp;
-	uint64_t cum_bw = 0;
 	uint32_t nhg_id = 0;
 	bool is_add;
 	uint32_t ttl = 0;
 	uint32_t bos = 0;
 	uint32_t exp = 0;
-
-	if (afi == AFI_LINKSTATE)
-		/* nothing to install */
-		return;
 
 	/*
 	 * BGP is installing this route and bgp has been configured
@@ -1403,8 +1332,6 @@ void bgp_zebra_announce(struct bgp_dest *dest, const struct prefix *p,
 
 	/* Determine if we're doing weighted ECMP or not */
 	do_wt_ecmp = bgp_path_info_mpath_chkwtd(bgp, info);
-	if (do_wt_ecmp)
-		cum_bw = bgp_path_info_mpath_cumbw(info);
 
 	/* EVPN MAC-IP routes are installed with a L3 NHG id */
 	if (bgp_evpn_path_es_use_nhg(bgp, info, &nhg_id)) {
@@ -1446,7 +1373,7 @@ void bgp_zebra_announce(struct bgp_dest *dest, const struct prefix *p,
 		 */
 		if (do_wt_ecmp) {
 			if (!bgp_zebra_use_nhop_weighted(bgp, mpinfo->attr,
-							 cum_bw, &nh_weight))
+							 &nh_weight))
 				continue;
 		}
 		api_nh = &api.nexthops[valid_nh_count];
@@ -3401,7 +3328,6 @@ static zclient_handler *const bgp_handlers[] = {
 	[ZEBRA_INTERFACE_ADDRESS_DELETE] = bgp_interface_address_delete,
 	[ZEBRA_INTERFACE_NBR_ADDRESS_ADD] = bgp_interface_nbr_address_add,
 	[ZEBRA_INTERFACE_NBR_ADDRESS_DELETE] = bgp_interface_nbr_address_delete,
-	[ZEBRA_INTERFACE_VRF_UPDATE] = bgp_interface_vrf_update,
 	[ZEBRA_REDISTRIBUTE_ROUTE_ADD] = zebra_read_route,
 	[ZEBRA_REDISTRIBUTE_ROUTE_DEL] = zebra_read_route,
 	[ZEBRA_NEXTHOP_UPDATE] = bgp_read_nexthop_update,

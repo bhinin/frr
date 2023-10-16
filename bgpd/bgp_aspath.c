@@ -1016,8 +1016,6 @@ static struct assegment *aspath_aggregate_as_set_add(struct aspath *aspath,
 				seg = seg->next;
 			seg->next = asset;
 		}
-		asset->type = AS_SET;
-		asset->length = 1;
 		asset->as[0] = as;
 	} else {
 		/* Check this AS value already exists or not. */
@@ -1894,7 +1892,7 @@ struct aspath *aspath_reconcile_as4(struct aspath *aspath,
 						"[AS4] AS4PATHmangle: AS_CONFED_SEQUENCE falls across 2/4 ASN boundary somewhere, broken..");
 				hops = seg->length;
 			}
-		/* fallthru */
+			fallthrough;
 		case AS_SEQUENCE:
 			cpasns = MIN(seg->length, hops);
 			hops -= seg->length;

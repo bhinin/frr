@@ -2948,8 +2948,8 @@ static void process_subq_early_route_delete(struct zebra_early_route *ere)
 
 	struct nexthop *nh = NULL;
 
-	if (ere->re->nhe)
-		nh = ere->re->nhe->nhg.nexthop;
+	if (ere->re_nhe)
+		nh = ere->re_nhe->nhg.nexthop;
 
 	/* Lookup same type route. */
 	RNODE_FOREACH_RE (rn, re) {
@@ -2967,7 +2967,8 @@ static void process_subq_early_route_delete(struct zebra_early_route *ere)
 		if (re->type == ZEBRA_ROUTE_KERNEL &&
 		    re->metric != ere->re->metric)
 			continue;
-		if (re->type == ZEBRA_ROUTE_CONNECT && (rtnh = nh) &&
+		if (re->type == ZEBRA_ROUTE_CONNECT &&
+		    (rtnh = re->nhe->nhg.nexthop) &&
 		    rtnh->type == NEXTHOP_TYPE_IFINDEX && nh) {
 			if (rtnh->ifindex != nh->ifindex)
 				continue;
@@ -4082,7 +4083,6 @@ static void _route_entry_dump_nh(const struct route_entry *re,
 			 ifp ? ifp->name : "Unknown");
 		break;
 	case NEXTHOP_TYPE_IPV4:
-		/* fallthrough */
 	case NEXTHOP_TYPE_IPV4_IFINDEX:
 		inet_ntop(AF_INET, &nexthop->gate, nhname, INET6_ADDRSTRLEN);
 		break;
@@ -5043,7 +5043,7 @@ struct route_table *rib_tables_iter_next(rib_tables_iter_t *iter)
 		iter->vrf_id = VRF_DEFAULT;
 		iter->afi_safi_ix = -1;
 
-	/* Fall through */
+		fallthrough;
 
 	case RIB_TABLES_ITER_S_ITERATING:
 		iter->afi_safi_ix++;
